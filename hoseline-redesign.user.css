@@ -1,0 +1,1230 @@
+/* ==UserStyle==
+@name           Hoseline Redesign
+@namespace      https://github.com/joelcalado/hoseline-redesign
+@version        2.0.0
+@description    Cleaner cards, nav and filter bar for hose.brandmeister.network, and the player as a floating corner card. CSS-only: the card only appears while the player popover is open (click PLAYER), it cannot switch between the idle pill and the full on-air card, and dark mode follows your OS setting. Install the .user.js version for the live QSO card with callsign, talkgroup name, timer and level meter.
+@author         Joel Calado
+@license        MIT
+==/UserStyle== */
+@-moz-document domain("hose.brandmeister.network") {
+  /* ------------------------------------------------------------------
+     Hoseline Redesign - shared stylesheet
+     Targets hose.brandmeister.network (MUI v5 / React)
+     Works standalone as a userstyle; the userscript adds:
+       html[data-hl-theme="light|dark"]  (follows the site's own toggle)
+       html[data-hl-qso="idle|live"]     (is anyone transmitting right now)
+       html.hl-player-hidden             (PLAYER button hides the card entirely)
+       --hl-card-h                       (measured card height, for page padding)
+     ------------------------------------------------------------------ */
+
+  /* ---------- tokens ---------- */
+  :root {
+    --hl-accent: #dd4b39;
+    --hl-accent-strong: #c73e2d;
+    --hl-accent-soft: rgba(221, 75, 57, 0.10);
+    --hl-accent-ring: rgba(221, 75, 57, 0.22);
+    /* --hl-accent itself is only 4.1:1 on white; this is the text-safe shade */
+    --hl-accent-text: #b8382a;
+
+    --hl-bg: #f3f4f6;
+    --hl-surface: #ffffff;
+    --hl-surface-2: #f6f7f9;
+    --hl-border: #e4e6ea;
+    --hl-border-strong: #cdd2d9;
+    --hl-text: #16191e;
+    --hl-muted: #667080;
+    --hl-faint: #98a1ad;
+
+    --hl-shadow: 0 1px 2px rgba(16, 20, 28, 0.04);
+    --hl-shadow-hover: 0 6px 18px rgba(16, 20, 28, 0.09);
+
+    --hl-radius: 12px;
+    --hl-radius-sm: 8px;
+    --hl-header-h: 52px;
+
+    /* motion. ease-out-quint: leaves fast, settles without overshooting */
+    --hl-ease: cubic-bezier(.22, 1, .36, 1);
+    --hl-morph: 300ms;
+
+    /* Level meter. The player reports dBFS, so the scale runs from
+       --hl-meter-floor dB at the left edge to 0 dB hard against the right one,
+       and --hl-ref marks the nominal level. The script maps its samples onto the
+       same scale; --hl-meter-floor is the constant the two have to agree on. */
+    --hl-meter-floor: 81;    /* dB below full scale at the left edge */
+    --hl-meter-ref: 20;      /* the marked reference, dB below full scale */
+    --hl-ref: calc((var(--hl-meter-floor) - var(--hl-meter-ref)) / var(--hl-meter-floor) * 100%);
+    --hl-meter-h: 10px;
+    --hl-meter-leds: 37;     /* a count, not a width - see the mask */
+    --hl-meter-duty: 68%;    /* how much of each LED's pitch is lit */
+
+    --hl-font: "Inter", "Source Sans Pro", ui-sans-serif, system-ui, -apple-system,
+      "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif,
+      "Twemoji Country Flags", "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji";
+    --hl-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  }
+
+  /* dark palette - three ways in, same tokens */
+  :root[data-hl-theme="dark"] {
+    --hl-accent-soft: rgba(221, 75, 57, 0.16);
+    --hl-accent-ring: rgba(221, 75, 57, 0.30);
+    --hl-accent-text: #f0705d;
+    --hl-bg: #0e1013;
+    --hl-surface: #171a1f;
+    --hl-surface-2: #1e222a;
+    --hl-border: #272c35;
+    --hl-border-strong: #363c48;
+    --hl-text: #e9ebef;
+    --hl-muted: #99a2b0;
+    --hl-faint: #66707e;
+    --hl-shadow: none;
+    --hl-shadow-hover: 0 8px 22px rgba(0, 0, 0, 0.45);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-hl-theme="light"]) {
+      --hl-accent-soft: rgba(221, 75, 57, 0.16);
+      --hl-accent-ring: rgba(221, 75, 57, 0.30);
+      --hl-accent-text: #f0705d;
+      --hl-bg: #0e1013;
+      --hl-surface: #171a1f;
+      --hl-surface-2: #1e222a;
+      --hl-border: #272c35;
+      --hl-border-strong: #363c48;
+      --hl-text: #e9ebef;
+      --hl-muted: #99a2b0;
+      --hl-faint: #66707e;
+      --hl-shadow: none;
+      --hl-shadow-hover: 0 8px 22px rgba(0, 0, 0, 0.45);
+      }
+  }
+
+  /* Registered so they *interpolate*: an unregistered custom property is a
+     token stream and flips discretely, which is why the pill's padding used to
+     snap to the card's. --hl-pad-x/y are the card's padding in both states. */
+  @property --hl-pad-x { syntax: "<length>"; inherits: true; initial-value: 14px; }
+  @property --hl-pad-y { syntax: "<length>"; inherits: true; initial-value: 14px; }
+  /* the meter's two moving parts; registering them is what lets the transition
+     below interpolate them rather than step between the script's samples */
+  @property --hl-level { syntax: "<percentage>"; inherits: true; initial-value: 0%; }
+  @property --hl-peak  { syntax: "<percentage>"; inherits: true; initial-value: 0%; }
+
+  /* ---------- base ---------- */
+  /* body's background is deliberately left to MUI: the userscript reads it to
+     learn which theme the site is in. We paint the ground on html + #app. */
+  html { background: var(--hl-bg) !important; }
+  #app { background: var(--hl-bg); min-height: 100vh; }
+  body {
+    font-family: var(--hl-font) !important;
+    color: var(--hl-text) !important;
+    -webkit-font-smoothing: antialiased;
+  }
+  #app .MuiTypography-root,
+  #app .MuiButton-root,
+  #app .MuiInputBase-root,
+  #app .MuiChip-root,
+  #app .MuiFormLabel-root,
+  #app .MuiFormControlLabel-label,
+  .MuiAutocomplete-popper,
+  .MuiMenu-paper {
+    font-family: var(--hl-font) !important;
+  }
+  ::selection { background: var(--hl-accent-soft); }
+
+  * { scrollbar-width: thin; scrollbar-color: var(--hl-border-strong) transparent; }
+  *::-webkit-scrollbar { width: 10px; height: 10px; }
+  *::-webkit-scrollbar-thumb { background: var(--hl-border-strong); border-radius: 999px; border: 3px solid var(--hl-bg); }
+  *::-webkit-scrollbar-track { background: transparent; }
+
+  /* ---------- top nav ---------- */
+  /* NOTE: no backdrop-filter/transform here - the player Popper lives inside
+     the header and must stay fixed to the *viewport* to float over the page. */
+  header.MuiAppBar-root {
+    background: var(--hl-surface) !important;
+    background-image: none !important;
+    color: var(--hl-text) !important;
+    box-shadow: none !important;
+    border-bottom: 1px solid var(--hl-border);
+  }
+  header .MuiToolbar-root {
+    min-height: var(--hl-header-h) !important;
+    padding: 0 20px !important;
+    gap: 10px;
+  }
+  /* the empty spacer div becomes the wordmark */
+  header .MuiToolbar-root > div:first-of-type {
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    font-weight: 700;
+    font-size: 16px;
+    letter-spacing: -0.015em;
+    color: var(--hl-text);
+  }
+  header .MuiToolbar-root > div:first-of-type::before {
+    content: "";
+    width: 9px; height: 9px;
+    border-radius: 50%;
+    background: var(--hl-accent);
+    box-shadow: 0 0 0 3px var(--hl-accent-soft);
+    animation: hl-breathe 2.4s ease-in-out infinite;
+  }
+  header .MuiToolbar-root > div:first-of-type::after {
+    content: "Hoseline";
+  }
+
+  /* theme toggle → last, squared icon button */
+  header button[aria-label="Switch Theme"] {
+    order: 3;
+    width: 34px; height: 34px;
+    padding: 0 !important;
+    margin: 0 !important;
+    border-radius: 10px !important;
+    border: 1px solid var(--hl-border);
+    color: var(--hl-muted) !important;
+    background: var(--hl-surface) !important;
+    transition: color .15s, background-color .15s, border-color .15s;
+  }
+  header button[aria-label="Switch Theme"]:hover {
+    color: var(--hl-text) !important;
+    background: var(--hl-surface-2) !important;
+    border-color: var(--hl-border-strong);
+  }
+  header button[aria-label="Switch Theme"] svg { width: 18px; height: 18px; }
+
+  /* PLAYER button → pill. With the userscript it shows/hides the QSO card. */
+  header .MuiToolbar-root .MuiButton-root {
+    height: 32px;
+    padding: 0 12px 0 10px !important;
+    border-radius: 999px !important;
+    border: 1px solid var(--hl-border);
+    background: var(--hl-surface) !important;
+    color: var(--hl-text) !important;
+    font-size: 12.5px !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.01em;
+    text-transform: none !important;
+    gap: 6px;
+    min-width: 0 !important;
+    transition: background-color .15s, border-color .15s;
+  }
+  header .MuiToolbar-root .MuiButton-root:hover {
+    background: var(--hl-surface-2) !important;
+    border-color: var(--hl-border-strong);
+  }
+  header .MuiToolbar-root .MuiButton-root svg {
+    width: 18px; height: 18px;
+    color: var(--hl-accent);
+  }
+  header .MuiToolbar-root .MuiButton-root::after {
+    content: "Hide";
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--hl-faint);
+    margin-left: 2px;
+  }
+  html.hl-player-hidden header .MuiToolbar-root .MuiButton-root::after { content: "Show"; }
+  /* the nav pill echoes the on-air state so it still reads when the card is hidden */
+  :root[data-hl-qso="live"] header .MuiToolbar-root .MuiButton-root {
+    border-color: color-mix(in srgb, var(--hl-accent) 55%, var(--hl-border));
+    background: var(--hl-accent-soft) !important;
+  }
+
+  /* ------------------------------------------------------------------
+     QSO CARD - the player popper, re-laid-out as a floating corner card.
+
+     Two states, driven by the userscript on <html>:
+       data-hl-qso="idle"  → slim pill: transport + selected TGs + picker
+       data-hl-qso="live"  → full card: callsign, talkgroup, level meter, timer
+
+     One spacing/shape vocabulary across both states: --hl-pad-x/y set the
+     card's padding *and* the anchor for the absolutely-drawn status strip,
+     and the three control affordances (transport, picker, chips) keep the
+     same sizes whether they sit in the pill or in the card's control zone.
+
+     The live card reads as two zones separated by a hairline:
+       ● ON AIR ............................ 1:07     status
+       CT1ABC Joao                                    who
+       268 · Portugal .............. 2681234          what
+       ▓▓▓▓▓▓▓░░░░░│░░░ ................ -18 peak     how loud
+       ------------------------------------------     ← divider
+       (■)(▶)  [268 ×] [4400 ×]                       my controls
+       [ ⌕ Add talkgroup…                       ]
+
+     Everything here is the site's own DOM restyled. The extra chrome
+     (ON AIR badge, elapsed timer, talkgroup name, peak marker) is drawn
+     with pseudo-elements fed by data-attributes and custom properties the
+     script sets - React never sees them, so it can re-render freely.
+     ------------------------------------------------------------------ */
+  /* The popper is a fixed-size, click-through gutter rather than a box that
+     shrink-wraps the card. Two reasons: the page underneath stays clickable
+     through everything the card is not covering, and the scoped view
+     transition below gets a coordinate space that does not move while the
+     card inside it changes size. The card is pinned to its bottom-right. */
+  #topplayer-menu {
+    position: fixed !important;
+    top: calc(var(--hl-header-h) + 12px) !important;
+    right: 20px !important;
+    bottom: 20px !important;
+    left: auto !important;
+    transform: none !important;
+    margin: 0 !important;
+    width: min(348px, calc(100vw - 40px)) !important;
+    max-width: none !important;
+    display: flex !important;
+    align-items: flex-end !important;
+    justify-content: flex-end !important;
+    pointer-events: none;
+    z-index: 1250 !important;
+  }
+  html.hl-player-hidden #topplayer-menu { display: none !important; }
+
+  #topplayer-menu > .MuiPaper-root {
+    /* the one place padding is decided; the status strip is anchored to it */
+    --hl-pad-x: 14px;
+    --hl-pad-y: 14px;
+    pointer-events: auto;
+    view-transition-name: hl-qso;
+    position: relative;
+    border-radius: 16px !important;
+    background: color-mix(in srgb, var(--hl-surface) 94%, transparent) !important;
+    background-image: none !important;
+    -webkit-backdrop-filter: saturate(1.5) blur(16px);
+    backdrop-filter: saturate(1.5) blur(16px);
+    border: 1px solid var(--hl-border-strong);
+    box-shadow: var(--hl-card-shadow, 0 10px 34px rgba(16, 20, 28, 0.16));
+    color: var(--hl-text) !important;
+    transition:
+      border-color var(--hl-morph) var(--hl-ease),
+      box-shadow var(--hl-morph) var(--hl-ease),
+      border-radius var(--hl-morph) var(--hl-ease),
+      --hl-pad-x var(--hl-morph) var(--hl-ease),
+      --hl-pad-y var(--hl-morph) var(--hl-ease),
+      /* meter ballistics: the script swaps --hl-lvl-t per sample so the needle
+         attacks fast and falls slow. The peak hold moves deliberately either way. */
+      --hl-level var(--hl-lvl-t, 60ms) linear,
+      --hl-peak 200ms linear;
+  }
+  /* While a view transition is morphing the card the snapshots own the motion,
+     and nothing inside may animate on its own. This is not just tidiness: the
+     script adds .hl-morphing *before* startViewTransition, and the new state is
+     captured one layout after the class lands - so a property still easing
+     towards its new value (the picker's width is the loud one) would be
+     photographed mid-flight and the card would snap when the morph ended. */
+  :root.hl-morphing #topplayer-menu,
+  :root.hl-morphing #topplayer-menu * { transition: none !important; }
+  :root[data-hl-theme="dark"] #topplayer-menu > .MuiPaper-root,
+  :root:not([data-hl-theme="light"]) #topplayer-menu > .MuiPaper-root {
+    --hl-card-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+  }
+  #topplayer-menu .MuiCardContent-root {
+    padding: var(--hl-pad-y) var(--hl-pad-x) !important;
+    margin: 0 !important;
+    max-width: none;
+  }
+  #topplayer-menu .MuiCardContent-root:last-child { padding-bottom: var(--hl-pad-y) !important; }
+  #topplayer-menu .MuiGrid-container { margin: 0 !important; width: 100% !important; }
+  #topplayer-menu .MuiGrid-container > .MuiGrid-root {
+    padding: 0 !important;
+    max-width: 100% !important;
+    flex-basis: 100% !important;
+  }
+  /* the app pins this wrapper to 240px inline; it is our real layout box */
+  #topplayer-menu .MuiGrid-container > .MuiGrid-root > div {
+    width: 100% !important;
+    max-width: none !important;
+  }
+  /* dissolve the [buttons + level readout] wrapper so both become layout items */
+  #topplayer-menu .MuiGrid-container > .MuiGrid-root > div > div:first-child {
+    display: contents !important;
+  }
+  #topplayer-menu .MuiGrid-container > .MuiGrid-root > div > div:first-child > div {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    view-transition-name: hl-tx;
+  }
+
+  /* ---------- transport ---------- */
+  /* 32px, the same height as the picker - one control height in both states */
+  #topplayer-menu button[aria-label="Stop player"],
+  #topplayer-menu button[aria-label="Start player"] {
+    width: 32px; height: 32px;
+    padding: 0 !important;
+    border-radius: 999px !important;
+    border: 1px solid var(--hl-border);
+    background: var(--hl-surface-2) !important;
+    color: var(--hl-text) !important;
+    transition: background-color .15s, color .15s, opacity .15s, transform .1s;
+  }
+  #topplayer-menu button[aria-label="Stop player"] svg,
+  #topplayer-menu button[aria-label="Start player"] svg { width: 18px; height: 18px; }
+  #topplayer-menu button[aria-label="Start player"]:not(.Mui-disabled) {
+    background: var(--hl-accent) !important;
+    border-color: var(--hl-accent-strong);
+    color: #fff !important;
+    box-shadow: 0 0 0 4px var(--hl-accent-ring);
+  }
+  #topplayer-menu button[aria-label="Stop player"]:not(.Mui-disabled):hover,
+  #topplayer-menu button[aria-label="Start player"]:not(.Mui-disabled):hover { transform: scale(1.07); }
+  #topplayer-menu button[aria-label="Stop player"].Mui-disabled,
+  #topplayer-menu button[aria-label="Start player"].Mui-disabled { opacity: .3; }
+
+  /* ---------- talkgroup chips + picker ---------- */
+  #topplayer-menu .MuiGrid-container > .MuiGrid-root > div > ul {
+    view-transition-name: hl-tgs;
+    display: flex !important;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 5px;
+    margin: 0 !important;
+    padding: 0 !important;
+    list-style: none;
+    background: transparent !important;
+    background-image: none !important;
+    box-shadow: none !important;
+  }
+  #topplayer-menu .MuiChip-root {
+    height: 24px !important;
+    margin: 0 !important;
+    border-radius: 8px !important;
+    border: 1px solid color-mix(in srgb, var(--hl-accent) 45%, var(--hl-border)) !important;
+    background: var(--hl-accent-soft) !important;
+    color: var(--hl-text) !important;
+    font-size: 11.5px !important;
+    font-weight: 600 !important;
+    font-variant-numeric: tabular-nums;
+  }
+  #topplayer-menu .MuiChip-root .MuiChip-label { padding: 0 4px 0 8px; }
+  #topplayer-menu .MuiChip-root .MuiChip-deleteIcon {
+    width: 15px; height: 15px;
+    margin: 0 4px 0 0 !important;
+    color: var(--hl-muted) !important;
+  }
+  #topplayer-menu .MuiChip-root .MuiChip-deleteIcon:hover { color: var(--hl-accent) !important; }
+
+  /* picker collapses to its icon and opens on hover/focus */
+  #topplayer-menu .MuiAutocomplete-root {
+    view-transition-name: hl-add;
+    width: 32px;
+    min-width: 32px;
+    transition: width .22s cubic-bezier(.4, 0, .2, 1), min-width .22s cubic-bezier(.4, 0, .2, 1);
+  }
+  #topplayer-menu .MuiAutocomplete-root:hover,
+  #topplayer-menu .MuiAutocomplete-root:focus-within {
+    width: 210px;
+    min-width: 210px;
+  }
+  #topplayer-menu .MuiAutocomplete-root .MuiInput-root {
+    border: 1px dashed var(--hl-border-strong);
+    border-radius: 10px;
+    background: var(--hl-surface-2);
+    padding: 0 4px 0 7px !important;
+    margin: 0 !important;
+    height: 32px;
+    flex-wrap: nowrap !important;
+    overflow: hidden;
+    font-size: 12.5px !important;
+    color: var(--hl-text) !important;
+    transition: border-color .15s, box-shadow .15s;
+  }
+  #topplayer-menu .MuiAutocomplete-root:hover .MuiInput-root { border-style: solid; }
+  #topplayer-menu .MuiAutocomplete-root .MuiInput-root.Mui-focused {
+    border-style: solid;
+    border-color: var(--hl-accent);
+    box-shadow: 0 0 0 3px var(--hl-accent-ring);
+  }
+  #topplayer-menu .MuiAutocomplete-root .MuiInput-root::before,
+  #topplayer-menu .MuiAutocomplete-root .MuiInput-root::after { display: none !important; }
+  #topplayer-menu .MuiAutocomplete-root .MuiInputAdornment-root { margin: 0 !important; flex: none; }
+  #topplayer-menu .MuiAutocomplete-root .MuiInputAdornment-root svg {
+    width: 16px; height: 16px;
+    color: var(--hl-muted);
+  }
+  #topplayer-menu .MuiAutocomplete-root .MuiInput-root input {
+    padding: 0 0 0 6px !important;
+    min-width: 0 !important;
+    font-size: 12.5px;
+    color: var(--hl-text);
+    opacity: 0;
+    transition: opacity .18s;
+  }
+  #topplayer-menu .MuiAutocomplete-root:hover .MuiInput-root input,
+  #topplayer-menu .MuiAutocomplete-root:focus-within .MuiInput-root input { opacity: 1; }
+  #topplayer-menu .MuiAutocomplete-root .MuiInput-root input::placeholder { color: var(--hl-muted); opacity: 1; }
+  #topplayer-menu .MuiAutocomplete-root .MuiAutocomplete-endAdornment {
+    opacity: 0;
+    transition: opacity .18s;
+  }
+  #topplayer-menu .MuiAutocomplete-root:hover .MuiAutocomplete-endAdornment,
+  #topplayer-menu .MuiAutocomplete-root:focus-within .MuiAutocomplete-endAdornment { opacity: 1; }
+  #topplayer-menu .MuiAutocomplete-popupIndicator,
+  #topplayer-menu .MuiAutocomplete-clearIndicator { color: var(--hl-muted) !important; }
+
+  /* ================= IDLE: slim pill ================= */
+  :root[data-hl-qso="idle"] #topplayer-menu > .MuiPaper-root {
+    --hl-pad-x: 10px;
+    --hl-pad-y: 8px;
+    border-radius: 999px !important;
+  }
+  :root[data-hl-qso="idle"] #topplayer-menu .MuiGrid-container > .MuiGrid-root > div {
+    display: flex !important;
+    align-items: center;
+    gap: 8px;
+  }
+  :root[data-hl-qso="idle"] #topplayer-menu .MuiGrid-container > .MuiGrid-root > div > p,
+  :root[data-hl-qso="idle"] #topplayer-menu .Player-root,
+  :root[data-hl-qso="idle"] #topplayer-menu .MuiTypography-caption { display: none !important; }
+  :root[data-hl-qso="idle"] #topplayer-menu .MuiGrid-container > .MuiGrid-root > div > ul:empty { display: none !important; }
+  /* chips read better before the "add" affordance; the DOM has them the other way */
+  :root[data-hl-qso="idle"] #topplayer-menu .MuiGrid-container > .MuiGrid-root > div > ul { order: 1; }
+  :root[data-hl-qso="idle"] #topplayer-menu .MuiAutocomplete-root { order: 2; }
+
+  /* ================= LIVE: full card =================
+     Rows, top to bottom:
+       1  status strip - ON AIR (grid item) + elapsed timer (absolute, right)
+       2  callsign / alias, the headline
+       3  talkgroup · name        |  DMR id
+       4  level meter             |  dB readout
+       5  the hairline: everything below is *your* controls, not the QSO
+       6  transport               |  selected talkgroup chips
+       7  add-talkgroup picker, full width
+
+     The hairline is its own row (the grid container's ::after) rather than a
+     border on the items beside it. That keeps the transport and the chips at
+     exactly the box they have in the pill, which is what lets them be view
+     transition *shared elements* further down: same size in both states means
+     the morph translates them instead of scaling them.
+
+     Column gap is 0 on purpose: items in the second and third columns carry
+     their own padding-left instead. Row spacing is set per row via margin-top
+     rather than a uniform row-gap, so the card has a rhythm: tight inside a
+     group (3px between the callsign and its meta line), generous between
+     groups (11px, then 12px + the rule + 14px). */
+  :root[data-hl-qso="live"] #topplayer-menu > .MuiPaper-root {
+    border-color: color-mix(in srgb, var(--hl-accent) 60%, var(--hl-border)) !important;
+    box-shadow: var(--hl-card-shadow, 0 10px 34px rgba(16, 20, 28, 0.16)),
+                0 0 0 3px var(--hl-accent-ring) !important;
+    animation: hl-card-in var(--hl-morph) var(--hl-ease);   /* only when there is no view transition to do it properly */
+  }
+  :root[data-hl-qso="live"] #topplayer-menu > .MuiPaper-root { width: 100%; }
+  :root[data-hl-qso="live"] #topplayer-menu .MuiGrid-container > .MuiGrid-root > div {
+    display: grid !important;
+    /* transport | everything that can flex | the right-hand readouts */
+    grid-template-columns: auto minmax(0, 1fr) fit-content(104px);
+    align-items: center;
+    row-gap: 0;
+    column-gap: 0;
+    width: 100% !important;
+  }
+
+  /* row 1 - status strip. The badge is a real grid item, so the card's top
+     padding is the same 14px as every other side; only the dot and the timer
+     are drawn absolutely, both anchored to --hl-pad-x/y so they land exactly
+     on the badge's 14px line box. */
+  :root[data-hl-qso="live"] #topplayer-menu .MuiGrid-container > .MuiGrid-root > div::before {
+    content: "ON AIR";
+    grid-column: 1 / -1;
+    grid-row: 1;
+    padding-left: 15px;              /* 7px dot + 8px gap */
+    font-size: 10px;
+    font-weight: 800;
+    line-height: 14px;
+    letter-spacing: .12em;
+    color: var(--hl-accent-text);
+  }
+  :root[data-hl-qso="live"] #topplayer-menu > .MuiPaper-root::before {
+    content: "";
+    position: absolute;
+    top: calc(var(--hl-pad-y) + 3.5px);
+    left: var(--hl-pad-x);
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--hl-accent);
+    animation: hl-breathe 1.4s ease-in-out infinite;
+  }
+  :root[data-hl-qso="live"] #topplayer-menu > .MuiPaper-root::after {
+    content: attr(data-hl-elapsed);
+    position: absolute;
+    top: var(--hl-pad-y);
+    right: var(--hl-pad-x);
+    font-family: var(--hl-mono);
+    font-size: 11px;
+    line-height: 14px;
+    font-weight: 600;
+    color: var(--hl-muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* row 2 - callsign / alias */
+  :root[data-hl-qso="live"] #topplayer-menu .MuiGrid-container > .MuiGrid-root > div > p:nth-of-type(3) {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    margin: 12px 0 0 !important;
+    font-size: 18px !important;
+    font-weight: 700 !important;
+    line-height: 1.2 !important;
+    letter-spacing: -0.012em;
+    color: var(--hl-text) !important;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* the hero line carries the site's "alias" icon - drop it, the line speaks for itself */
+  :root[data-hl-qso="live"] #topplayer-menu .MuiGrid-container > .MuiGrid-root > div > p:nth-of-type(3) svg {
+    display: none;
+  }
+  /* row 3 - talkgroup (+ name from the grid) | DMR id.
+     The id used to be a bordered badge; a card this small only needs one
+     boxed vocabulary (the chips), so it is plain mono text now. */
+  :root[data-hl-qso="live"] #topplayer-menu .MuiGrid-container > .MuiGrid-root > div > p:nth-of-type(2) {
+    grid-column: 1 / 3;
+    grid-row: 3;
+    margin: 3px 0 0 !important;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
+    font-size: 12.5px !important;
+    font-weight: 600 !important;
+    line-height: 1.35 !important;
+    color: var(--hl-text) !important;
+    font-variant-numeric: tabular-nums;
+  }
+  :root[data-hl-qso="live"] #topplayer-menu .MuiGrid-container > .MuiGrid-root > div > p:nth-of-type(2)::after {
+    content: attr(data-hl-tgname);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 500;
+    color: var(--hl-muted);
+  }
+  :root[data-hl-qso="live"] #topplayer-menu .MuiGrid-container > .MuiGrid-root > div > p:nth-of-type(1) {
+    grid-column: 3;
+    grid-row: 3;
+    justify-self: end;
+    margin: 3px 0 0 !important;
+    padding-left: 10px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-family: var(--hl-mono) !important;
+    font-size: 11px !important;
+    line-height: 1.35 !important;
+    letter-spacing: .01em;
+    color: var(--hl-muted) !important;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  :root[data-hl-qso="live"] #topplayer-menu .MuiGrid-container > .MuiGrid-root > div > p svg {
+    width: 13px; height: 13px;
+    color: var(--hl-muted);
+    flex: none;
+  }
+  /* row 4 - level meter | dB readout */
+  :root[data-hl-qso="live"] #topplayer-menu .Player-root {
+    position: relative;
+    grid-column: 1 / 3;
+    grid-row: 4;
+    width: auto;
+    margin-top: 11px;
+  }
+  :root[data-hl-qso="live"] #topplayer-menu .MuiTypography-caption {
+    grid-column: 3;
+    grid-row: 4;
+    justify-self: end;
+    margin-top: 11px;
+    padding-left: 10px;
+  }
+  /* row 5 - the hairline, drawn as the grid's own ::after so it is a row of
+     the layout rather than a border stuck to the items around it */
+  :root[data-hl-qso="live"] #topplayer-menu .MuiGrid-container > .MuiGrid-root > div::after {
+    content: "";
+    grid-column: 1 / -1;
+    grid-row: 5;
+    height: 1px;
+    margin-top: 12px;
+    background: var(--hl-border);
+  }
+  /* row 6 - the control zone. Neither item carries padding or a border, so its
+     box is the same here as it is in the pill (see the shared elements below). */
+  :root[data-hl-qso="live"] #topplayer-menu .MuiGrid-container > .MuiGrid-root > div > div:first-child > div {
+    grid-column: 1;
+    grid-row: 6;
+    margin-top: 14px;
+  }
+  :root[data-hl-qso="live"] #topplayer-menu .MuiGrid-container > .MuiGrid-root > div > ul {
+    grid-column: 2 / -1;
+    grid-row: 6;
+    justify-self: start;
+    align-content: center;
+    margin: 14px 0 0 12px !important;
+  }
+  /* row 7 - picker, full width and always open (there is room for it here) */
+  :root[data-hl-qso="live"] #topplayer-menu .MuiAutocomplete-root {
+    grid-column: 1 / -1;
+    grid-row: 7;
+    width: 100%;
+    min-width: 0;
+    margin-top: 8px;
+  }
+  :root[data-hl-qso="live"] #topplayer-menu .MuiAutocomplete-root .MuiInput-root input,
+  :root[data-hl-qso="live"] #topplayer-menu .MuiAutocomplete-endAdornment { opacity: 1; }
+  :root[data-hl-qso="live"] #topplayer-menu .MuiAutocomplete-root .MuiInput-root { border-style: solid; }
+
+  /* Between overs the site blanks all three facts, but we hold the card open for
+     a moment so it does not flap. Show the cached values through that gap - this
+     is exactly the "last heard" a radio display would keep on screen - and fade
+     them back a touch, so held and live never read the same. */
+  :root[data-hl-qso="live"] #topplayer-menu .MuiGrid-container > .MuiGrid-root > div > p {
+    transition: opacity .25s;
+  }
+  :root[data-hl-qso="live"] #topplayer-menu .MuiGrid-container > .MuiGrid-root > div > p[data-hl-empty="1"] {
+    opacity: .72;
+  }
+  :root[data-hl-qso="live"] #topplayer-menu .MuiGrid-container > .MuiGrid-root > div > p[data-hl-empty="1"]::before {
+    content: attr(data-hl-last);
+    order: 1;                       /* sit after the icon, not before it */
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  :root[data-hl-qso="live"] #topplayer-menu .MuiGrid-container > .MuiGrid-root > div > p[data-hl-empty="1"]::after {
+    content: "";                    /* the name is already inside data-hl-last */
+  }
+
+  /* ---------- level meter ----------
+     The player gives us a caption ("-18  peak -18") and a MUI progress bar. We
+     keep the bar's box and take over what it paints, for three reasons:
+
+       · MUI eases the determinate bar over 400ms linear. That is a progress
+         bar's ballistics. A meter has to attack fast and fall slow or it reads
+         as lag rather than level, so the script drives --hl-level and picks the
+         attack/decay time per sample.
+       · A fill painted by MUI carries its own gradient, so the leading edge is
+         the same colour whatever the level. Painting the ramp on the *scale* and
+         clipping it to the level means the colour under the leading edge says
+         where you are before you read the number: amber below 0 dB, the accent
+         at it, deeper red past it.
+       · The segments are cut with a mask instead of being painted over with
+         opaque stripes. The card is a translucent, blurred surface, so stripes
+         in --hl-surface never quite matched it; holes always do.
+
+     With the stylesheet alone there is no --hl-level, so MUI's own bar stays
+     visible and simply inherits the segmentation. */
+  #topplayer-menu .Player-root { display: flex; align-items: center; position: relative; }
+
+  #topplayer-menu .MuiLinearProgress-root {
+    position: relative;
+    width: 100%;
+    height: var(--hl-meter-h) !important;
+    border: 0;
+    border-radius: 0;
+    overflow: hidden;
+    /* One flat unlit colour. A warm tint past 0 dB was tempting and wrong: at a
+       glance a tinted unlit segment reads as a lit one, which is the single
+       thing a meter must never get wrong. The 0 dB mark carries the zone. */
+    background: var(--hl-border-strong) !important;
+    /* The LEDs themselves: real gaps, not stripes painted in the surface colour,
+       which never quite matched a translucent card. One tile per LED sized to
+       100%/count rather than a repeating gradient at a fixed pitch - a fixed
+       pitch leaves a clipped sliver of an LED at whatever width does not divide
+       evenly, and the meter is a different width on the phone layout. */
+    -webkit-mask-image: linear-gradient(90deg, #000 0 var(--hl-meter-duty), transparent var(--hl-meter-duty));
+    mask-image: linear-gradient(90deg, #000 0 var(--hl-meter-duty), transparent var(--hl-meter-duty));
+    -webkit-mask-size: calc(100% / var(--hl-meter-leds)) 100%;
+    mask-size: calc(100% / var(--hl-meter-leds)) 100%;
+  }
+  /* the lit part: the ramp belongs to the scale, the level only clips it */
+  #topplayer-menu .MuiLinearProgress-root::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg,
+      color-mix(in srgb, var(--hl-accent) 22%, #f0a202) 0%,     /* −81 dB */
+      color-mix(in srgb, var(--hl-accent) 45%, #f0a202) 63%,    /* −30 dB */
+      var(--hl-accent) 88%,                                     /* −10 dB */
+      var(--hl-accent-strong) 100%);                            /*   0 dB */
+    clip-path: inset(0 calc(100% - clamp(0%, var(--hl-level), 100%)) 0 0);
+  }
+  /* MUI's bar is the fallback for the stylesheet-only install; while the script
+     is driving, --hl-level owns the fill and the bar would double it */
+  :root[data-hl-qso] #topplayer-menu .MuiLinearProgress-bar { display: none !important; }
+  #topplayer-menu .MuiLinearProgress-bar {
+    background: linear-gradient(90deg,
+      color-mix(in srgb, var(--hl-accent) 55%, #f0a202),
+      var(--hl-accent)) !important;
+    border-radius: 0;
+  }
+
+  /* The −20 dB reference, drawn on .Player-root - outside the masked strip, so it
+     is a continuous hairline rather than a dashed one. The vertical gradient
+     keeps it to small marks above and below the meter instead of a line struck
+     through the reading. 0 dB needs no mark: it is the right-hand edge. */
+  :root[data-hl-qso="live"] #topplayer-menu .Player-root::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: var(--hl-ref);
+    width: 1px;
+    height: calc(var(--hl-meter-h) + 8px);
+    transform: translate(-50%, -50%);
+    background: linear-gradient(180deg,
+      var(--hl-faint) 0 3px,
+      transparent 3px calc(100% - 3px),
+      var(--hl-faint) calc(100% - 3px) 100%);
+  }
+  /* peak hold - the player computes the hold, we only place the marker */
+  :root[data-hl-qso="live"] #topplayer-menu .Player-root::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: clamp(0%, var(--hl-peak), 100%);
+    width: 2px;
+    height: calc(var(--hl-meter-h) + 4px);
+    margin-left: -1px;
+    transform: translateY(-50%);
+    border-radius: 1px;
+    background: var(--hl-text);
+    opacity: .6;
+  }
+
+  #topplayer-menu .MuiTypography-caption {
+    font-family: var(--hl-mono) !important;
+    font-size: 11px !important;
+    line-height: 1.3 !important;
+    color: var(--hl-muted) !important;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  @keyframes hl-card-in {
+    from { opacity: 0; transform: translateY(8px) scale(.98); }
+    to   { opacity: 1; transform: none; }
+  }
+  /* the view transition owns the entrance when it is available */
+  :root.hl-morphing #topplayer-menu > .MuiPaper-root { animation: none !important; }
+
+  /* ---------- the idle <-> live morph ----------
+     The script swaps data-hl-qso inside a view transition, so the browser
+     interpolates a layout change CSS on its own cannot express: a flex pill
+     becomes a seven-row grid and five elements go from display:none to laid out.
+
+     The pseudo tree hangs off whichever element scoped the transition - the
+     popper for a scoped one (Element.startViewTransition, which snapshots only
+     the card and leaves the rest of the page rendering and clickable), :root for
+     the document-wide fallback. Both are addressed throughout.
+
+     The choreography, part by part:
+       hl-qso   the card body. Its two snapshots paint the same surface colour
+                and differ only in radius and in what is printed on them, so the
+                old one is simply held under the new until the new is opaque -
+                cross-fading them would let the page show through the card.
+       hl-tx    transport, and
+       hl-tgs   the talkgroup chips. Same box in both states (which is why the
+                hairline is its own grid row and the chips use margin, not
+                padding), so there is nothing to cross-fade: show the new
+                snapshot and let the group's transform do the travelling.
+       hl-add   the picker, the one part that really changes shape. Both
+                snapshots render at captured size so the magnifier never
+                stretches, and they cross-fade while the group carries the box.
+     ------------------------------------------------------------------ */
+  #topplayer-menu::view-transition-group(hl-qso),
+  #topplayer-menu::view-transition-group(hl-tx),
+  #topplayer-menu::view-transition-group(hl-tgs),
+  #topplayer-menu::view-transition-group(hl-add),
+  :root::view-transition-group(hl-qso),
+  :root::view-transition-group(hl-tx),
+  :root::view-transition-group(hl-tgs),
+  :root::view-transition-group(hl-add) {
+    animation-duration: var(--hl-morph);
+    animation-timing-function: var(--hl-ease);
+  }
+
+  /* the card body */
+  #topplayer-menu::view-transition-old(hl-qso),
+  #topplayer-menu::view-transition-new(hl-qso),
+  :root::view-transition-old(hl-qso),
+  :root::view-transition-new(hl-qso) {
+    /* the UA default is block-size:auto, which lets a snapshot keep the aspect
+       ratio it was captured at and drift out of the box the group is morphing */
+    height: 100%;
+    object-fit: fill;
+  }
+  #topplayer-menu::view-transition-old(hl-qso),
+  :root::view-transition-old(hl-qso) { animation: hl-vt-out 70ms var(--hl-ease) 230ms both; }
+  #topplayer-menu::view-transition-new(hl-qso),
+  :root::view-transition-new(hl-qso) { animation: hl-vt-in 180ms var(--hl-ease) 40ms both; }
+
+  /* transport + chips: identical in both states, so they only travel */
+  #topplayer-menu::view-transition-old(hl-tx),
+  #topplayer-menu::view-transition-old(hl-tgs),
+  :root::view-transition-old(hl-tx),
+  :root::view-transition-old(hl-tgs) { animation: none; opacity: 0; }
+  #topplayer-menu::view-transition-new(hl-tx),
+  #topplayer-menu::view-transition-new(hl-tgs),
+  :root::view-transition-new(hl-tx),
+  :root::view-transition-new(hl-tgs) { animation: none; opacity: 1; }
+
+  /* the picker */
+  #topplayer-menu::view-transition-old(hl-add),
+  #topplayer-menu::view-transition-new(hl-add),
+  :root::view-transition-old(hl-add),
+  :root::view-transition-new(hl-add) {
+    height: 100%;
+    object-fit: none;
+    object-position: left center;
+  }
+  #topplayer-menu::view-transition-old(hl-add),
+  :root::view-transition-old(hl-add) { animation: hl-vt-out 90ms var(--hl-ease) both; }
+  #topplayer-menu::view-transition-new(hl-add),
+  :root::view-transition-new(hl-add) { animation: hl-vt-in 150ms var(--hl-ease) 70ms both; }
+
+  /* Document-wide fallback only: keep the rest of the page out of it. The new
+     root layer is live content, so dropping the old snapshot and its cross-fade
+     leaves the grid updating and clickable exactly as if nothing happened. */
+  :root::view-transition-group(root) { animation: none; }
+  :root::view-transition-old(root) { display: none; }
+  :root::view-transition-new(root) { animation: none; opacity: 1; mix-blend-mode: normal; }
+
+  @keyframes hl-vt-out { from { opacity: 1 } to { opacity: 0 } }
+  @keyframes hl-vt-in  { from { opacity: 0 } to { opacity: 1 } }
+
+  /* ---------- main / layout ---------- */
+  main {
+    padding: 14px 20px calc(var(--hl-card-h, 56px) + 36px) !important;
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+  main > div:first-child:not(.MuiGrid-container) {
+    min-height: var(--hl-header-h) !important;
+  }
+  main > .MuiGrid-container {
+    display: grid !important;
+    grid-template-columns: repeat(auto-fill, minmax(232px, 1fr));
+    gap: 10px;
+    margin: 0 !important;
+    width: 100% !important;
+  }
+  main > .MuiGrid-container > .MuiGrid-root {
+    padding: 0 !important;
+    max-width: none !important;
+    flex-basis: auto !important;
+    width: auto !important;
+    min-width: 0;
+  }
+
+  /* ---------- filter bar ---------- */
+  main > .MuiGrid-container > .MuiGrid-grid-xs-12:not(.MuiGrid-grid-sm-6) {
+    grid-column: 1 / -1;
+    position: sticky;
+    top: var(--hl-header-h);
+    z-index: 20;
+    margin-bottom: 2px;
+  }
+  main > .MuiGrid-container > .MuiGrid-grid-xs-12:not(.MuiGrid-grid-sm-6) > .MuiPaper-root {
+    background: color-mix(in srgb, var(--hl-surface) 92%, transparent) !important;
+    background-image: none !important;
+    -webkit-backdrop-filter: saturate(1.4) blur(12px);
+    backdrop-filter: saturate(1.4) blur(12px);
+    box-shadow: var(--hl-shadow) !important;
+    border: 1px solid var(--hl-border);
+    border-radius: var(--hl-radius) !important;
+    color: var(--hl-text) !important;
+  }
+  main > .MuiGrid-container > .MuiGrid-grid-xs-12:not(.MuiGrid-grid-sm-6) .MuiCardContent-root {
+    padding: 8px 12px !important;
+  }
+  main .MuiFormGroup-row {
+    align-items: center;
+    gap: 8px 18px;
+  }
+  main .MuiFormGroup-row .MuiFormControl-fullWidth {
+    width: auto !important;
+    flex: 1 1 260px;
+    flex-direction: row !important;
+    align-items: center;
+    gap: 10px;
+    margin: 0 !important;
+  }
+  #country-filter-label {
+    position: static !important;
+    transform: none !important;
+    font-size: 10.5px !important;
+    font-weight: 700 !important;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--hl-muted) !important;
+    line-height: 1 !important;
+  }
+  main .MuiFormGroup-row .MuiInput-root {
+    flex: 1 1 auto;
+    margin: 0 !important;
+    border: 1px solid var(--hl-border);
+    border-radius: 10px;
+    background: var(--hl-surface-2);
+    font-size: 13px !important;
+    color: var(--hl-text) !important;
+    transition: border-color .15s, box-shadow .15s;
+  }
+  main .MuiFormGroup-row .MuiInput-root:hover { border-color: var(--hl-border-strong); }
+  main .MuiFormGroup-row .MuiInput-root.Mui-focused {
+    border-color: var(--hl-accent);
+    box-shadow: 0 0 0 3px var(--hl-accent-ring);
+  }
+  main .MuiFormGroup-row .MuiInput-root::before,
+  main .MuiFormGroup-row .MuiInput-root::after { display: none !important; }
+  main .MuiFormGroup-row .MuiSelect-select {
+    padding: 6px 30px 6px 12px !important;
+    min-height: 0 !important;
+    line-height: 1.4 !important;
+    border-radius: 10px;
+  }
+  main .MuiFormGroup-row .MuiSelect-icon { color: var(--hl-muted); right: 6px; }
+  main .MuiFormControlLabel-root {
+    margin: 0 !important;
+    gap: 2px;
+  }
+  main .MuiFormControlLabel-label {
+    font-size: 13px !important;
+    font-weight: 500 !important;
+    color: var(--hl-muted) !important;
+  }
+  main .MuiSwitch-root { transform: scale(.85); margin: -6px -4px; }
+  main .MuiSwitch-switchBase.Mui-checked { color: var(--hl-accent) !important; }
+  main .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track { background: var(--hl-accent) !important; opacity: .5 !important; }
+
+  /* ---------- talkgroup cards ---------- */
+  main .MuiGrid-grid-sm-6 > .MuiCard-root {
+    position: relative;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--hl-surface) !important;
+    background-image: none !important;
+    color: var(--hl-text) !important;
+    border: 1px solid var(--hl-border) !important;
+    border-radius: var(--hl-radius) !important;
+    box-shadow: var(--hl-shadow) !important;
+    transition: border-color .18s, box-shadow .18s, transform .18s, background-color .35s;
+  }
+  main .MuiGrid-grid-sm-6 > .MuiCard-root:hover {
+    border-color: var(--hl-border-strong) !important;
+    box-shadow: var(--hl-shadow-hover) !important;
+    transform: translateY(-1px);
+  }
+  /* active = the site paints an inline red border; we match on that */
+  main .MuiGrid-grid-sm-6 > .MuiCard-root[style*="221, 75, 57"] {
+    border-color: color-mix(in srgb, var(--hl-accent) 55%, var(--hl-border)) !important;
+    background: color-mix(in srgb, var(--hl-accent) 5%, var(--hl-surface)) !important;
+    box-shadow: 0 0 0 3px var(--hl-accent-ring) !important;
+  }
+  main .MuiGrid-grid-sm-6 .MuiCardContent-root {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 11px 14px 11px !important;
+  }
+  main .MuiGrid-grid-sm-6 .MuiCardContent-root:last-child { padding-bottom: 11px !important; }
+
+  /* header row: flag + TG id | time */
+  main .MuiGrid-grid-sm-6 .MuiCardContent-root > .MuiGrid-container {
+    margin: 0 !important;
+    width: 100% !important;
+    align-items: center;
+  }
+  main .MuiGrid-grid-sm-6 .MuiCardContent-root > .MuiGrid-container > .MuiGrid-root { padding: 0 !important; }
+  main .MuiGrid-grid-sm-6 .MuiCardContent-root > .MuiGrid-container > .MuiGrid-grid-xs-grow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+  main .MuiGrid-grid-sm-6 .MuiCardContent-root > .MuiGrid-container > .MuiGrid-grid-xs-grow > span { display: inline-flex; flex: none; }
+  main .MuiCard-root span[role="img"] {
+    font-family: "Twemoji Country Flags", var(--hl-font) !important;
+    font-size: 18px !important;
+    line-height: 1 !important;
+    filter: drop-shadow(0 1px 1px rgba(0,0,0,.12));
+  }
+  main .MuiGrid-grid-sm-6 .MuiCardContent-root > .MuiGrid-container > .MuiGrid-grid-xs-grow > p {
+    font-size: 15px !important;
+    font-weight: 700 !important;
+    letter-spacing: -0.01em;
+    line-height: 1.2 !important;
+    color: var(--hl-text) !important;
+    font-variant-numeric: tabular-nums;
+    overflow: visible !important;   /* the id must never truncate - the name below can */
+    flex: none;
+  }
+  main .MuiGrid-grid-sm-6 .MuiCardContent-root > .MuiGrid-container > .MuiGrid-grid-xs-auto { flex: 0 1 auto !important; min-width: 0; }
+  main .MuiGrid-grid-sm-6 .MuiCardContent-root > .MuiGrid-container > .MuiGrid-grid-xs-auto > p {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 11.5px !important;
+    line-height: 1 !important;
+    color: var(--hl-faint) !important;
+    font-variant-numeric: tabular-nums;
+  }
+  main .MuiGrid-grid-sm-6 .MuiCardContent-root > .MuiGrid-container > .MuiGrid-grid-xs-auto > p svg {
+    width: 15px; height: 15px;
+    color: var(--hl-accent);
+    animation: hl-pulse 1.3s ease-in-out infinite;
+  }
+  main .MuiGrid-grid-sm-6 > .MuiCard-root[style*="221, 75, 57"] .MuiCardContent-root > .MuiGrid-container > .MuiGrid-grid-xs-auto > p {
+    color: var(--hl-accent) !important;
+    font-weight: 600;
+  }
+
+  /* talkgroup name */
+  main .MuiGrid-grid-sm-6 .MuiCardContent-root > p.MuiTypography-body2 {
+    font-size: 12px !important;
+    line-height: 1.3 !important;
+    color: var(--hl-muted) !important;
+    margin: 2px 0 10px !important;
+    min-height: 1.3em !important;
+  }
+
+  /* talker block */
+  main .MuiGrid-grid-sm-6 .MuiCardContent-root > div[style*="margin-top"] {
+    border-top: 1px dashed var(--hl-border);
+    padding-top: 8px;
+  }
+  main .MuiGrid-grid-sm-6 .MuiCardContent-root > div[style*="margin-top"] > p {
+    font-size: 13.5px !important;
+    font-weight: 600 !important;
+    line-height: 1.3 !important;
+    color: var(--hl-text) !important;
+  }
+  main .MuiGrid-grid-sm-6 .MuiCardContent-root > div[style*="margin-top"] > .MuiGrid-container {
+    margin: 2px 0 0 !important;
+    width: 100% !important;
+    align-items: center;
+    gap: 8px;
+  }
+  main .MuiGrid-grid-sm-6 .MuiCardContent-root > div[style*="margin-top"] > .MuiGrid-container > .MuiGrid-root { padding: 0 !important; min-width: 0; }
+  main .MuiGrid-grid-sm-6 .MuiCardContent-root > div[style*="margin-top"] > .MuiGrid-container > .MuiGrid-grid-xs-grow > p {
+    font-size: 12.5px !important;
+    line-height: 1.3 !important;
+    color: var(--hl-muted) !important;
+  }
+  /* master / server id */
+  main .MuiGrid-grid-sm-6 .MuiCardContent-root > div[style*="margin-top"] > .MuiGrid-container > .MuiGrid-grid-xs-auto > p {
+    font-family: var(--hl-mono) !important;
+    font-size: 10.5px !important;
+    line-height: 1 !important;
+    color: var(--hl-faint) !important;
+    background: var(--hl-surface-2);
+    border: 1px solid var(--hl-border);
+    border-radius: 6px;
+    padding: 3px 6px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ---------- popups (select menu, autocomplete list) ---------- */
+  .MuiMenu-paper,
+  .MuiAutocomplete-popper .MuiPaper-root {
+    background: var(--hl-surface) !important;
+    background-image: none !important;
+    color: var(--hl-text) !important;
+    border: 1px solid var(--hl-border) !important;
+    border-radius: 10px !important;
+    box-shadow: var(--hl-shadow-hover) !important;
+  }
+  .MuiMenu-paper .MuiMenuItem-root,
+  .MuiAutocomplete-popper .MuiAutocomplete-option {
+    font-size: 13px !important;
+    border-radius: 6px;
+    margin: 0 6px;
+  }
+  .MuiMenu-paper .MuiListSubheader-root,
+  .MuiAutocomplete-popper .MuiAutocomplete-groupLabel {
+    background: var(--hl-surface) !important;
+    color: var(--hl-faint) !important;
+    font-size: 10.5px !important;
+    font-weight: 700 !important;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    line-height: 28px !important;
+  }
+  .MuiMenu-paper .MuiMenuItem-root.Mui-selected,
+  .MuiAutocomplete-popper .MuiAutocomplete-option[aria-selected="true"] {
+    background: var(--hl-accent-soft) !important;
+  }
+  .MuiMenu-paper .MuiMenuItem-root:hover,
+  .MuiAutocomplete-popper .MuiAutocomplete-option.Mui-focused {
+    background: var(--hl-surface-2) !important;
+  }
+
+  /* ---------- toasts (Sonner) clear the card ---------- */
+  [data-sonner-toaster] {
+    --offset: calc(var(--hl-card-h, 56px) + 32px) !important;
+    --offset-bottom: calc(var(--hl-card-h, 56px) + 32px) !important;
+  }
+  [data-sonner-toast] {
+    font-family: var(--hl-font) !important;
+    border-radius: 10px !important;
+  }
+
+  /* ---------- motion ---------- */
+  @keyframes hl-pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50%      { opacity: .5; transform: scale(.82); }
+  }
+  @keyframes hl-breathe {
+    0%, 100% { box-shadow: 0 0 0 3px var(--hl-accent-soft); }
+    50%      { box-shadow: 0 0 0 6px transparent; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+    /* the script also skips startViewTransition; this covers a transition that
+       was already in flight when the preference changed */
+    ::view-transition-group(*),
+    ::view-transition-old(*),
+    ::view-transition-new(*) { animation: none !important; }
+  }
+
+  /* ---------- narrow screens ---------- */
+  @media (max-width: 720px) {
+    header .MuiToolbar-root { padding: 0 12px !important; }
+    main { padding-left: 12px !important; padding-right: 12px !important; }
+    main > .MuiGrid-container { grid-template-columns: repeat(auto-fill, minmax(172px, 1fr)); gap: 8px; }
+    /* the card spans the width of the screen and sits just above the bottom edge */
+    #topplayer-menu {
+      top: calc(var(--hl-header-h) + 8px) !important;
+      right: 10px !important;
+      bottom: 10px !important;
+      left: 10px !important;
+      width: auto !important;
+    }
+    :root[data-hl-qso="live"] #topplayer-menu .MuiGrid-container > .MuiGrid-root > div {
+      width: 100% !important;
+      max-width: none !important;
+    }
+    /* the picker is always open on touch - there is no hover to expand it */
+    #topplayer-menu .MuiAutocomplete-root,
+    #topplayer-menu .MuiAutocomplete-root:hover { width: 100%; min-width: 0; }
+    :root[data-hl-qso="idle"] #topplayer-menu .MuiAutocomplete-root { flex: 1 1 90px; }
+    /* keep the pill one row tall - chips scroll sideways instead of wrapping */
+    :root[data-hl-qso="idle"] #topplayer-menu .MuiGrid-container > .MuiGrid-root > div > ul {
+      flex-wrap: nowrap;
+      overflow-x: auto;
+      min-width: 0;
+      flex: 0 1 auto;
+      scrollbar-width: none;
+    }
+    :root[data-hl-qso="idle"] #topplayer-menu .MuiGrid-container > .MuiGrid-root > div > ul::-webkit-scrollbar { display: none; }
+    :root[data-hl-qso="idle"] #topplayer-menu .MuiChip-root { flex: none; }
+    #topplayer-menu .MuiAutocomplete-root .MuiInput-root { border-style: solid; }
+    #topplayer-menu .MuiAutocomplete-root .MuiInput-root input,
+    #topplayer-menu .MuiAutocomplete-endAdornment { opacity: 1; }
+    main .MuiGrid-grid-sm-6 .MuiCardContent-root { padding: 9px 10px !important; }
+    main .MuiGrid-grid-sm-6 .MuiCardContent-root > .MuiGrid-container > .MuiGrid-grid-xs-auto > p { font-size: 11px !important; }
+  }
+
+}

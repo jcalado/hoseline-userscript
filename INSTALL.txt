@@ -1,0 +1,28 @@
+HOSELINE REDESIGN - INSTALL
+===========================
+
+Install THIS file:      hoseline-redesign.user.js     (Tampermonkey / Violentmonkey)
+or, CSS only:           hoseline-redesign.user.css    (Stylus)
+
+Do NOT install anything from the src/ folder. src/userscript.template.js is the
+build input, not a script: it is not named *.user.js and still contains a __CSS__
+placeholder, so Tampermonkey will not offer to install it.
+
+--- Method 1: paste (always works) ---
+1. Tampermonkey icon > Dashboard
+2. the "+" tab (Create a new script)
+3. select all in the editor, delete, paste the whole of hoseline-redesign.user.js
+4. File > Save  (or Ctrl/Cmd+S)
+
+--- Method 2: open the file (needs one Chrome setting) ---
+Chrome blocks extensions from reading local files by default, so dragging the
+.user.js into a tab does nothing until you allow it:
+1. chrome://extensions  >  Tampermonkey  >  Details
+2. turn ON "Allow access to file URLs"
+3. also make sure "Developer mode" (top right of chrome://extensions) is ON -
+   Chrome's MV3 requires it before Tampermonkey can run userscripts at all
+4. now drag hoseline-redesign.user.js into a tab; the install page appears
+
+--- Check it worked ---
+Open https://hose.brandmeister.network/ - the nav should read "Hoseline" with a
+red dot, and the player should sit as a pill in the bottom-right corner.
